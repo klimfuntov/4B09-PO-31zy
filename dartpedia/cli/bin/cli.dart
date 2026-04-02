@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:http/http.dart' as http;
 
 const version = '0.0.1';
 void main(List<String> arguments) {
@@ -6,29 +7,46 @@ void main(List<String> arguments) {
     printUsage();
   } else if (arguments.first == 'version') {
     print('Dartpedia CLI version $version');
-    } else if (arguments.first == 'search') {
+      } else if (arguments.first == 'wikipedia') {
     final inputArgs = arguments.length > 1 ? arguments.sublist(1) : null;
     searchWikipedia(inputArgs);
   }else {
     printUsage();
   }
 }
-void searchWikipedia(List<String>? arguments) {
+Future<String> getWikipediaArticle(String articleTitle) async {
+  final url = Uri.https(
+    'en.wikipedia.org',
+    '/api/rest_v1/page/summary/$articleTitle',
+  );
+  
+  final response = await http.get(url);
+
+  if (response.statusCode == 200) {
+    return response.body;
+  }
+
+  return 'Error: Failed to fetch article "$articleTitle". Status code: ${response.statusCode}';
+}
+void searchWikipedia(List<String>? arguments) async {
   final String articleTitle;
 
-  // Если аргументы не переданы, запрашиваем название статьи
   if (arguments == null || arguments.isEmpty) {
     print('Please provide an article title.');
-    // Читаем ввод пользователя, ?? '' заменяет null на пустую строку
-    articleTitle = stdin.readLineSync() ?? '';
+    final inputFromStdin = stdin.readLineSync();
+    if (inputFromStdin == null || inputFromStdin.isEmpty) {
+      print('No article title provided. Exiting.');
+      return;
+    }
+    articleTitle = inputFromStdin;
   } else {
-    // Объединяем все слова в одну строку через пробел
     articleTitle = arguments.join(' ');
   }
 
   print('Looking up articles about "$articleTitle". Please wait.');
-  print('Here ya go!');
-  print('(Pretend this is an article about "$articleTitle")');
+
+  final articleContent = await getWikipediaArticle(articleTitle);
+  print(articleContent);
 }
 void printUsage() {
   print(
