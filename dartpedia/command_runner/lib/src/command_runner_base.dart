@@ -1,37 +1,42 @@
-import 'dart:async';      // Добавить
+import 'dart:async';
 import 'dart:collection';
 import 'dart:io';
 
 import 'arguments.dart';
-import 'exceptions.dart';  // Добавить
+import 'exceptions.dart';
 
 class CommandRunner {
-  // Добавить конструктор
-  CommandRunner({this.onError});
+  CommandRunner({this.onOutput, this.onError});
 
   final Map<String, Command> _commands = <String, Command>{};
 
   UnmodifiableSetView<Command> get commands =>
       UnmodifiableSetView<Command>(<Command>{..._commands.values});
 
-  // Добавить поле onError
+  /// If not null, this method is used to handle output.
+  FutureOr<void> Function(String)? onOutput;
+
   FutureOr<void> Function(Object)? onError;
 
   Future<void> run(List<String> input) async {
-  try {
-    final ArgResults results = parse(input);
-    if (results.command != null) {
-      Object? output = await results.command!.run(results);
-      print(output.toString());
-    }
-  } on Exception catch (exception) {
-    if (onError != null) {
-      onError!(exception);
-    } else {
-      rethrow;
+    try {
+      final ArgResults results = parse(input);
+      if (results.command != null) {
+        Object? output = await results.command!.run(results);
+        if (onOutput != null) {
+          await onOutput!(output.toString());
+        } else {
+          print(output.toString());
+        }
+      }
+    } on Exception catch (exception) {
+      if (onError != null) {
+        onError!(exception);
+      } else {
+        rethrow;
+      }
     }
   }
-}
 
   void addCommand(Command command) {
     _commands[command.name] = command;
@@ -39,93 +44,98 @@ class CommandRunner {
   }
 
   ArgResults parse(List<String> input) {
-  ArgResults results = ArgResults();
-  if (input.isEmpty) return results;
+    ArgResults results = ArgResults();
+    if (input.isEmpty) return results;
 
-  // Проверка: команда должна существовать
-  if (_commands.containsKey(input.first)) {
-    results.command = _commands[input.first];
-    input = input.sublist(1);
-  } else {
-    throw ArgumentException(
-      'The first word of input must be a command.',
-      null,
-      input.first,
-    );
-  }
+    // Throw an exception if the command is not recognized.
+    if (_commands.containsKey(input.first)) {
+      results.command = _commands[input.first];
+      input = input.sublist(1);
+    } else {
+      throw ArgumentException(
+        'The first word of input must be a command.',
+        null,
+        input.first,
+      );
+    }
 
-  // Проверка: только одна команда
-  if (results.command != null &&
-      input.isNotEmpty &&
-      _commands.containsKey(input.first)) {
-    throw ArgumentException(
-      'Input can only contain one command. Got ${input.first} and ${results.command!.name}',
-      null,
-      input.first,
-    );
-  }
+    // Throw an exception if multiple commands are provided.
+    if (results.command != null &&
+        input.isNotEmpty &&
+        _commands.containsKey(input.first)) {
+      throw ArgumentException(
+        'Input can only contain one command. Got ${input.first} and ${results.command!.name}',
+        null,
+        input.first,
+      );
+    }
 
-  // Обработка опций (флагов и параметров)
-  Map<Option, Object?> inputOptions = {};
-  int i = 0;
-  while (i < input.length) {
-    if (input[i].startsWith('-')) {
-      var base = _removeDash(input[i]);
-      
-      // Проверка: опция должна существовать для этой команды
-      var option = results.command!.options.firstWhere(
-        (option) => option.name == base || option.abbr == base,
-        orElse: () {
+    // Section: Handle options, including flags.
+    Map<Option, Object?> inputOptions = {};
+    int i = 0;
+    while (i < input.length) {
+      if (input[i].startsWith('-')) {
+        var base = _removeDash(input[i]);
+        // Throw an exception if an option is not recognized for the given command.
+        var option = results.command!.options.firstWhere(
+          (option) => option.name == base || option.abbr == base,
+          orElse: () {
+            throw ArgumentException(
+              'Unknown option ${input[i]}',
+              results.command!.name,
+              input[i],
+            );
+          },
+        );
+
+        if (option.type == OptionType.flag) {
+          inputOptions[option] = true;
+          i++;
+          continue;
+        }
+
+        if (option.type == OptionType.option) {
+          // Throw an exception if an option requires an argument but none is given.
+          if (i + 1 >= input.length) {
+            throw ArgumentException(
+              'Option ${option.name} requires an argument',
+              results.command!.name,
+              option.name,
+            );
+          }
+          if (input[i + 1].startsWith('-')) {
+            throw ArgumentException(
+              'Option ${option.name} requires an argument, but got another option ${input[i + 1]}',
+              results.command!.name,
+              option.name,
+            );
+          }
+          var arg = input[i + 1];
+          inputOptions[option] = arg;
+          i++;
+        }
+      } else {
+        // Throw an exception if more than one positional argument is provided.
+        if (results.commandArg != null && results.commandArg!.isNotEmpty) {
           throw ArgumentException(
-            'Unknown option ${input[i]}',
+            'Commands can only have up to one argument.',
             results.command!.name,
             input[i],
           );
-        },
-      );
-
-      if (option.type == OptionType.flag) {
-        inputOptions[option] = true;
-        i++;
-        continue;
-      }
-
-      if (option.type == OptionType.option) {
-        // Проверка: у опции должно быть значение
-        if (i + 1 >= input.length) {
-          throw ArgumentException(
-            'Option ${option.name} requires an argument',
-            results.command!.name,
-            option.name,
-          );
         }
-        if (input[i + 1].startsWith('-')) {
-          throw ArgumentException(
-            'Option ${option.name} requires an argument, but got another option ${input[i + 1]}',
-            results.command!.name,
-            option.name,
-          );
-        }
-        var arg = input[i + 1];
-        inputOptions[option] = arg;
-        i++;
+        results.commandArg = input[i];
       }
-    } else {
-      // Проверка: только один позиционный аргумент
-      if (results.commandArg != null && results.commandArg!.isNotEmpty) {
-        throw ArgumentException(
-          'Commands can only have up to one argument.',
-          results.command!.name,
-          input[i],
-        );
-      }
-      results.commandArg = input[i];
+      i++;
     }
-    i++;
-  }
-  results.options = inputOptions;
+    results.options = inputOptions;
 
-  return results;
+    return results;
+  }
+
+  String get usage {
+    final exeFile = Platform.script.path.split('/').last;
+    return 'Usage: dart bin/$exeFile <command> [commandArg?] [...options?]';
+  }
 }
 
 String _removeDash(String input) {
@@ -136,10 +146,4 @@ String _removeDash(String input) {
     return input.substring(1);
   }
   return input;
-}
-
-  String get usage {
-    final exeFile = Platform.script.path.split('/').last;
-    return 'Usage: dart bin/$exeFile <command> [commandArg?] [...options?]';
-  }
 }
