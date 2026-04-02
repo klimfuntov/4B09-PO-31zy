@@ -1,8 +1,6 @@
-import 'package:wikipedia/wikipedia.dart';
 import 'package:test/test.dart';
 
 void main() {
-  test('calculate', () {
-    expect(calculate(), 42);
-  });
+  // Этот файл больше не используется.
+  // Тесты находятся в model_test.dart
 }
